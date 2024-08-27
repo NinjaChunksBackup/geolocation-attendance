@@ -1,3 +1,3 @@
-# eams
+# EAMS
 
-A new Flutter project.
+Geolocation based attendance marking system with Biometric authentication
