@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
 import 'package:intl/intl.dart';
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -34,6 +31,9 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
   bool _isFaceDetected = false;
   DateTime? _workStartTime;
   Timer? _workTimer;
+
+  bool _showFaceDetectedMessage = false;
+  Timer? _faceDetectedTimer;
 
   final Color _primaryColor = Colors.blue[700]!;
   final Color _accentColor = Colors.blue[300]!;
@@ -154,10 +154,10 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
           setState(() {
             _isWithinRange = newIsWithinRange;
           });
-          if (!_isWithinRange) {
-            _pauseWork();
+          if (_isWithinRange) {
+            _startPhotoCapture();
           } else {
-            _resumeWork();
+            _stopPhotoCapture();
           }
         }
 
@@ -171,18 +171,14 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
           _locationInfo =
               'Lat: ${position.latitude}, Long: ${position.longitude}';
         });
-      }
-
-      if (_isWithinRange && _photoTimer == null) {
         _startPhotoCapture();
-      } else if (!_isWithinRange && _photoTimer != null) {
-        _stopPhotoCapture();
       }
     } catch (e) {
       setState(() {
         _locationInfo = 'Error detecting location';
         _isWithinRange = false;
       });
+      _stopPhotoCapture();
     }
   }
 
@@ -217,14 +213,20 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
   }
 
   void _startPhotoCapture() {
-    _photoTimer = Timer.periodic(Duration(seconds: 5), (_) {
-      _captureAndAnalyzePhoto();
-    });
+    if (_photoTimer == null) {
+      _photoTimer = Timer.periodic(Duration(seconds: 5), (_) {
+        _captureAndAnalyzePhoto();
+      });
+    }
   }
 
   void _stopPhotoCapture() {
     _photoTimer?.cancel();
     _photoTimer = null;
+    setState(() {
+      _isFaceDetected = false;
+      _showFaceDetectedMessage = false;
+    });
   }
 
   Future<void> _captureAndAnalyzePhoto() async {
@@ -237,12 +239,20 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
 
       setState(() {
         _isFaceDetected = faces.isNotEmpty;
+        if (_isFaceDetected) {
+          _showFaceDetectedMessage = true;
+          _faceDetectedTimer?.cancel();
+          _faceDetectedTimer = Timer(Duration(seconds: 1), () {
+            if (_isWithinRange && _workStartTime == null) {
+              _startWork();
+            }
+          });
+        } else {
+          _showFaceDetectedMessage = false;
+        }
       });
 
-      if (_isFaceDetected && _isWithinRange && _workStartTime == null) {
-        _startWork();
-      } else if ((!_isFaceDetected || !_isWithinRange) &&
-          _workStartTime != null) {
+      if ((!_isFaceDetected || !_isWithinRange) && _workStartTime != null) {
         _stopWork();
       }
     } catch (e) {
@@ -351,10 +361,24 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
     _photoTimer?.cancel();
     _workTimer?.cancel();
     _faceDetector?.close();
+    _faceDetectedTimer?.cancel();
     super.dispose();
   }
 
-  @override
+  void _handleFaceDetection(Face? face) {
+    setState(() {
+      _isFaceDetected = face != null;
+      if (_isFaceDetected) {
+        _faceDetectedTimer?.cancel();
+        _faceDetectedTimer = Timer(Duration(seconds: 1), () {
+          setState(() {
+            _isFaceDetected = false;
+          });
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -384,42 +408,80 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
                     color: _textColor),
               ),
               SizedBox(height: 20),
-              Center(
-                child: FutureBuilder<void>(
-                  future: _initializeControllerFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.done) {
-                      return Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Container(
-                            height: 350,
-                            width: 350,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(color: Colors.black26, blurRadius: 10)
-                              ],
+              if (_isWithinRange) ...[
+                Center(
+                  child: FutureBuilder<void>(
+                    future: _initializeControllerFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.done) {
+                        return Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              height: 350,
+                              width: 350,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: Colors.black26, blurRadius: 10)
+                                ],
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: CameraPreview(_cameraController!),
+                              ),
                             ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(20),
-                              child: CameraPreview(_cameraController!),
-                            ),
-                          ),
-                          if (widget.isOffsite)
-                            Icon(
-                              Icons.location_on,
-                              size: 50,
-                              color: Colors.white.withOpacity(0.7),
-                            ),
-                        ],
-                      );
-                    } else {
-                      return CircularProgressIndicator();
-                    }
-                  },
+                            if (widget.isOffsite)
+                              Icon(
+                                Icons.location_on,
+                                size: 50,
+                                color: Colors.white.withOpacity(0.7),
+                              ),
+                          ],
+                        );
+                      } else {
+                        return CircularProgressIndicator();
+                      }
+                    },
+                  ),
                 ),
-              ),
+                SizedBox(height: 20),
+                Center(
+                  child: Text(
+                    _showFaceDetectedMessage
+                        ? 'Face detected'
+                        : 'No face detected',
+                    style: TextStyle(
+                      color:
+                          _showFaceDetectedMessage ? Colors.green : Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ] else ...[
+                Center(
+                  child: Container(
+                    height: 350,
+                    width: 350,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Out of range\nCamera disabled',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: _textColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               SizedBox(height: 20),
               Center(
                 child: Text(
@@ -428,16 +490,6 @@ class _StartWorkingHourScreenState extends State<StartWorkingHourScreen> {
                       : 'Out of range - Attendance paused',
                   style: TextStyle(
                     color: _isWithinRange ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              SizedBox(height: 10),
-              Center(
-                child: Text(
-                  _isFaceDetected ? 'Face detected' : 'No face detected',
-                  style: TextStyle(
-                    color: _isFaceDetected ? Colors.green : Colors.red,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -487,7 +539,8 @@ Future<void> _updateWorkTimer() async {
         .difference(DateTime.fromMillisecondsSinceEpoch(startTime));
     String formattedDuration = _formatDuration(workDuration);
 
-    await _showNotification('Work Timer', 'Working time: $formattedDuration');
+    await _showBackgroundNotification(
+        'Work Timer', 'Working time: $formattedDuration');
   }
 }
 
@@ -498,7 +551,7 @@ String _formatDuration(Duration duration) {
   return "${twoDigits(duration.inHours)}:$twoDigitMinutes:$twoDigitSeconds";
 }
 
-Future<void> _showNotification(String title, String body) async {
+Future<void> _showBackgroundNotification(String title, String body) async {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
 

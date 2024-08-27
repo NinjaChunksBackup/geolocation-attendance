@@ -79,10 +79,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _checkWorkStatus() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     int? startTime = prefs.getInt('workStartTime');
+    bool? isWithinRange = prefs.getBool('isWithinRange');
     if (startTime != null) {
       setState(() {
         _isWorking = true;
         _workStartTime = DateTime.fromMillisecondsSinceEpoch(startTime);
+        _isWithinRange = isWithinRange ?? true;
       });
       _startTimer();
     }
@@ -126,6 +128,8 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _isWithinRange = newIsWithinRange;
         });
+        SharedPreferences prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isWithinRange', _isWithinRange);
         if (!_isWithinRange) {
           _pauseWork();
         } else {
@@ -202,7 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
               children: <Widget>[
                 if (!_isWorking)
                   _buildGridItem(Icons.access_time, 'Start Working Hour'),
-                _buildGridItem(Icons.add_location_alt, 'Add New Workplace'),
                 _buildGridItem(Icons.calendar_today, 'Attendance Summary'),
                 _buildGridItem(Icons.assignment, 'Leave Application'),
               ],
